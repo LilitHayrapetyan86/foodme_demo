@@ -28,3 +28,8 @@ INSERT INTO foodme.dish (id, name_en, name_am, name_ru, description_en, price, u
 
 INSERT INTO foodme.admin (id, username, password_hash, role) VALUES
 (1, 'admin', '$2y$10$oMkXATQDgiPBCh29e2u7ROJkWXECjE2kmHPwCpJGAvkf3TuFbnZCi', 'ADMIN');
+
+INSERT INTO foodme.promo_code (id, code, percent, min_order_amount, valid_until) VALUES
+(1, 'SAVE10', 10, 3000.0, NULL),
+(2, 'TREAT15', 15, 8000.0, NULL),
+(3, 'OLD15', 15, 0.0, DATE '2025-12-31');

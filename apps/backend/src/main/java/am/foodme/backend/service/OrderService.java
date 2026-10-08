@@ -7,6 +7,8 @@ import am.foodme.backend.dto.DeliveryPriceResponseDto;
 import am.foodme.backend.dto.OrderCreateResponseDto;
 import am.foodme.backend.dto.OrderDto;
 import am.foodme.backend.dto.OrderListResponseDto;
+import am.foodme.backend.dto.PromoApplyRequestDto;
+import am.foodme.backend.dto.PromoApplyResponseDto;
 import am.foodme.backend.exceptionHandler.BadRequestException;
 import am.foodme.backend.exceptionHandler.ConflictException;
 import am.foodme.backend.exceptionHandler.NotFoundException;
@@ -21,6 +23,8 @@ import am.foodme.backend.repository.CustomerRepository;
 import am.foodme.backend.repository.DishRepository;
 import am.foodme.backend.repository.OrderRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -30,23 +34,29 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
 @Service
 public class OrderService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
     private final OrderRepository orderRepository;
     private final ChefRepository chefRepository;
     private final DishRepository dishRepository;
     private final CustomerRepository customerRepository;
     private final MeterRegistry meterRegistry;
+    private final PromoService promoService;
 
     public OrderService(OrderRepository orderRepository, ChefRepository chefRepository,
                          DishRepository dishRepository, CustomerRepository customerRepository,
-                         MeterRegistry meterRegistry) {
+                         MeterRegistry meterRegistry, PromoService promoService) {
         this.orderRepository = orderRepository;
         this.chefRepository = chefRepository;
         this.dishRepository = dishRepository;
         this.customerRepository = customerRepository;
         this.meterRegistry = meterRegistry;
+        this.promoService = promoService;
     }
 
     public DeliveryPriceResponseDto calculateDeliveryPrice(DeliveryPriceRequestDto request) {
@@ -64,6 +74,16 @@ public class OrderService {
             deliveryPrice = 0.0;
         }
         return new DeliveryPriceResponseDto(deliveryPrice, chef.getFreeDeliveryFrom());
+    }
+
+    public PromoApplyResponseDto applyPromo(PromoApplyRequestDto request, String customerEmail) {
+        double subtotal = request.getSubtotal() == null ? 0.0 : request.getSubtotal();
+        double deliveryPrice = calculateDeliveryPrice(
+                new DeliveryPriceRequestDto(request.getChefId(), subtotal, request.getDeliveryMethod())).getDeliveryPrice();
+        PromoApplyResponseDto quote = promoService.quote(request.getCode(), subtotal, deliveryPrice);
+        log.info("promo.applied {} {} {}", kv("code", quote.getCode()), kv("status", quote.getStatus()),
+                kv("discount", quote.getDiscount()));
+        return quote;
     }
 
     @Transactional
@@ -150,7 +170,22 @@ public class OrderService {
             deliveryPrice = calculateDeliveryPrice(priceRequest).getDeliveryPrice();
         }
         order.setDeliveryPrice(deliveryPrice);
-        order.setTotalPrice(subtotal + deliveryPrice);
+
+        double discount = 0.0;
+        if (orderDto.getPromoCode() != null && !orderDto.getPromoCode().isBlank()) {
+            PromoApplyResponseDto quote = promoService.quote(orderDto.getPromoCode(), subtotal, deliveryPrice);
+            if (!PromoService.APPLIED.equals(quote.getStatus())) {
+                throw new BadRequestException("Promo code " + quote.getCode() + " cannot be applied");
+            }
+            discount = quote.getDiscount();
+            order.setPromoCode(quote.getCode());
+            order.setDiscount(discount);
+            if (orderDto.getDiscount() != null && Math.abs(orderDto.getDiscount() - discount) > 0.5) {
+                log.error("order.discount_mismatch {} {} {}", kv("code", quote.getCode()),
+                        kv("quoted", orderDto.getDiscount()), kv("computed", discount));
+            }
+        }
+        order.setTotalPrice(subtotal - discount + deliveryPrice);
 
         long seqValue = orderRepository.nextOrderNumberSequenceValue();
         order.setNumber("FM-" + (100000 + seqValue));
