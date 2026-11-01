@@ -1,0 +1,30 @@
+From 2caccd8d7f21cea023d34aed36bdd67d4eb216b8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 24 Sep 2026 15:20:03 +0000
+Subject: [PATCH] Adjust cart quantity decrement threshold (FM-BUG-07)
+
+Seeded bug for agent reproduce/fix exercise, tracked in Jira.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GsSRpKbEWwEpkK7ZwD4DAL
+---
+ apps/web/src/hooks/useCart.ts | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/apps/web/src/hooks/useCart.ts b/apps/web/src/hooks/useCart.ts
+index 6988b8b..1275cd2 100644
+--- a/apps/web/src/hooks/useCart.ts
++++ b/apps/web/src/hooks/useCart.ts
+@@ -72,7 +72,8 @@ export async function decrementCartItem(uid: string): Promise<void> {
+   const existing = await db.products.get(uid);
+   if (!existing) return;
+   const min = existing.limitations?.minQuantity ?? 1;
+-  if (existing.quantity <= min) {
++  // FM-BUG-07
++  if (existing.quantity <= min + 1) {
+     await db.products.delete(uid);
+     return;
+   }
+-- 
+2.43.0
+
