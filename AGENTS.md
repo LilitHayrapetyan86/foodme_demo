@@ -98,6 +98,13 @@ Things that span several files:
 - Backend logs reach Loki only when `LOKI_PUSH_URL` is set. Errors go to GlitchTip through the Sentry SDKs.
 - `.mcp.json` in the repo root connects the Atlassian MCP server, so Jira and Confluence are reachable from Claude Code.
 
+## Agent configuration
+
+- `AGENTS.md` (this file) holds shared guidance for all agents. `CLAUDE.md` imports it and adds Claude Code specifics.
+- `.agents/` holds tool-agnostic resources shared across agents. Put reusable skills and instructions in `.agents/skills/`.
+- `.claude/` holds Claude Code configuration: `settings.json` (shared permissions, committed), plus `skills/`, `agents/` (subagents), `rules/` and `hooks/`.
+- `.claude/settings.local.json` is for personal, machine-local overrides and is gitignored.
+
 ## Course-specific behavior
 
 Some odd behavior here is on purpose, so check before treating it as an accident:
