@@ -6,7 +6,10 @@
       "Bash(./gradlew.bat test:*)",
       "Bash(npm run test:e2e:*)",
       "Bash(npx playwright test:*)",
-      "Bash(npx playwright show-report:*)"
+      "Bash(npx playwright show-report:*)",
+      "mcp__claude_ai_Atlassian_MCP__getJiraIssue",
+      "mcp__claude_ai_Atlassian_MCP__searchJiraIssuesUsingJql",
+      "mcp__claude_ai_Atlassian_MCP__getAccessibleAtlassianResources"
     ],
     "deny": []
   }
