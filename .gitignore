@@ -63,3 +63,6 @@ infra/docker-compose.local.yml
 
 # --- AI agents (machine-local settings) -----------------------------------
 .claude/settings.local.json
+
+# --- Regression reports (local, see /run-regression) ---------------------
+reports/
