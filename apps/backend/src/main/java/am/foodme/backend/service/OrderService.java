@@ -8,6 +8,7 @@ import am.foodme.backend.dto.OrderCreateResponseDto;
 import am.foodme.backend.dto.OrderDto;
 import am.foodme.backend.dto.OrderListResponseDto;
 import am.foodme.backend.exceptionHandler.BadRequestException;
+import am.foodme.backend.exceptionHandler.ConflictException;
 import am.foodme.backend.exceptionHandler.NotFoundException;
 import am.foodme.backend.model.Address;
 import am.foodme.backend.model.Chef;
@@ -166,6 +167,25 @@ public class OrderService {
         Order order = orderRepository.findByNumber(number)
                 .orElseThrow(() -> new NotFoundException("Order " + number + " not found"));
         return OrderDto.mapEntityToDto(order);
+    }
+
+    /**
+     * Lets a customer cancel their own order while the kitchen hasn't accepted it yet.
+     * Someone else's order is reported as not found so order numbers can't be probed.
+     * CANCELLED is terminal: AdminOrderService has no transitions out of it.
+     */
+    @Transactional
+    public OrderDto cancelForCustomer(String number, String customerEmail) {
+        Customer customer = customerRepository.findByEmail(customerEmail == null ? "" : customerEmail.trim().toLowerCase())
+                .orElseThrow(() -> new NotFoundException("Customer not found"));
+        Order order = orderRepository.findByNumber(number)
+                .filter(o -> o.getCustomer() != null && customer.getId().equals(o.getCustomer().getId()))
+                .orElseThrow(() -> new NotFoundException("Order " + number + " not found"));
+        if (!"NEW".equals(order.getStatus())) {
+            throw new ConflictException("Order " + number + " can no longer be cancelled (status " + order.getStatus() + ")");
+        }
+        order.setStatus("CANCELLED");
+        return OrderDto.mapEntityToDto(orderRepository.save(order));
     }
 
     @Transactional(readOnly = true)

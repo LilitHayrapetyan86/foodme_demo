@@ -11,11 +11,13 @@ const STATUS_LABEL: Record<string, string> = {
   ACCEPTED: "Preparing",
   DELIVERED: "Delivered",
   REJECTED: "Declined",
+  CANCELLED: "Cancelled",
 };
 
 function statusClass(status: string) {
   if (status === "DELIVERED") return "bg-emerald-50 text-emerald-800 ring-emerald-100";
   if (status === "REJECTED") return "bg-red-50 text-red-700 ring-red-100";
+  if (status === "CANCELLED") return "bg-zinc-200/70 text-zinc-600 ring-zinc-300";
   if (status === "ACCEPTED") return "bg-amber-50 text-amber-800 ring-amber-100";
   return "bg-zinc-100 text-zinc-700 ring-zinc-200/80";
 }
