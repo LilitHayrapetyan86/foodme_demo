@@ -1,8 +1,16 @@
+import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Check, ChefHat, Package, Truck, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Ban, Check, ChefHat, Package, Truck, X } from "lucide-react";
 import { foodmeApi } from "@/api/foodme";
+import { ApiRequestError } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatAmd } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 
@@ -29,10 +37,14 @@ const STATUS_COPY: Record<string, { title: string; detail: string }> = {
     title: "Order declined",
     detail: "This order couldn’t be fulfilled. Contact support if you need help.",
   },
+  CANCELLED: {
+    title: "Order cancelled",
+    detail: "You cancelled this order. The kitchen won’t prepare it.",
+  },
 };
 
 function stepIndex(status: string): number {
-  if (status === "REJECTED") return -1;
+  if (status === "REJECTED" || status === "CANCELLED") return -1;
   const i = STEPS.findIndex((s) => s.key === status);
   return i >= 0 ? i : 0;
 }
@@ -40,11 +52,33 @@ function stepIndex(status: string): number {
 export default function Tracking() {
   const { number } = useParams<{ number: string }>();
   const { isAuthenticated } = useAuth();
+  const queryClient = useQueryClient();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["order", number],
     queryFn: () => foodmeApi.getOrderByNumber(number as string),
     enabled: !!number,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => foodmeApi.cancelOrder(number as string),
+    onSuccess: (updated) => {
+      setCancelError(null);
+      queryClient.setQueryData(["order", number], updated);
+      void queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+    },
+    onError: (error) => {
+      setCancelError(
+        error instanceof ApiRequestError && error.status === 409
+          ? "The kitchen has already accepted this order, so it can no longer be cancelled."
+          : "Couldn’t cancel the order. Please try again.",
+      );
+      void refetch();
+      void queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+    },
+    onSettled: () => setConfirmOpen(false),
   });
 
   if (isLoading) {
@@ -85,7 +119,9 @@ export default function Tracking() {
     detail: "Current status for your order.",
   };
   const active = stepIndex(data.status);
-  const rejected = data.status === "REJECTED";
+  const cancelled = data.status === "CANCELLED";
+  const rejected = data.status === "REJECTED" || cancelled;
+  const canCancel = isAuthenticated && data.status === "NEW";
 
   return (
     <div className="tp_wrap mx-auto max-w-7xl px-4 py-10 md:px-8 md:py-14">
@@ -106,9 +142,15 @@ export default function Tracking() {
         <div className="bezel-inner p-5 md:p-6">
           {rejected ? (
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-red-100">
-                <X size={18} strokeWidth={2} />
-              </div>
+              {cancelled ? (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200">
+                  <Ban size={18} strokeWidth={2} />
+                </div>
+              ) : (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-red-100">
+                  <X size={18} strokeWidth={2} />
+                </div>
+              )}
               <div>
                 <p className="font-display text-lg font-bold text-zinc-900">{copy.title}</p>
                 <p className="mt-1 text-sm leading-relaxed text-zinc-500">{copy.detail}</p>
@@ -170,8 +212,58 @@ export default function Tracking() {
               </ol>
             </>
           )}
+
+          {cancelError && (
+            <p role="alert" className="mt-5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-100">
+              {cancelError}
+            </p>
+          )}
+
+          {canCancel && (
+            <div className="mt-6 flex justify-end border-t border-zinc-100 pt-5">
+              <Button
+                variant="outline"
+                className="rounded-full border-red-200 text-red-700 hover:bg-red-50"
+                disabled={cancelMutation.isPending}
+                onClick={() => {
+                  setCancelError(null);
+                  setConfirmOpen(true);
+                }}
+              >
+                Cancel order
+              </Button>
+            </div>
+          )}
         </div>
       </div>
+
+      <Dialog open={confirmOpen} onOpenChange={(open) => !cancelMutation.isPending && setConfirmOpen(open)}>
+        <DialogContent className="p-6">
+          <DialogTitle className="font-display text-xl font-bold text-zinc-900">
+            Cancel this order?
+          </DialogTitle>
+          <DialogDescription className="mt-2 text-sm leading-relaxed text-zinc-500">
+            Order {data.number} will be cancelled and the kitchen won’t prepare it. This can’t be undone.
+          </DialogDescription>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              className="rounded-full"
+              disabled={cancelMutation.isPending}
+              onClick={() => setConfirmOpen(false)}
+            >
+              Keep order
+            </Button>
+            <Button
+              className="rounded-full bg-red-600 text-white hover:bg-red-700"
+              disabled={cancelMutation.isPending}
+              onClick={() => cancelMutation.mutate()}
+            >
+              {cancelMutation.isPending ? "Cancelling…" : "Yes, cancel order"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="bezel-outer shadow-diffuse mt-5 animate-fade-up [animation-delay:120ms]">
         <div className="bezel-inner overflow-hidden">
