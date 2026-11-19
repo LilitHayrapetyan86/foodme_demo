@@ -63,9 +63,11 @@ infra/docker-compose.local.yml
 
 # --- AI agents (machine-local settings) -----------------------------------
 .claude/settings.local.json
-# Junctions to .agents/skills and .agents/agents (created locally); the files are tracked in .agents
-.claude/skills
-.claude/agents
+# .claude/skills and .claude/agents are committed as symlinks to ../.agents/*.
+# On Windows without symlink support they are local junctions instead; the
+# trailing slash keeps git from adding their contents a second time.
+.claude/skills/
+.claude/agents/
 
 # --- Regression reports (local, see /run-regression) ---------------------
 reports/
