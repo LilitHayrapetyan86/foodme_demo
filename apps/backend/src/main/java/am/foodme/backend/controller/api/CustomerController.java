@@ -3,6 +3,8 @@ package am.foodme.backend.controller.api;
 import am.foodme.backend.dto.CustomerProfileDto;
 import am.foodme.backend.dto.OrderDto;
 import am.foodme.backend.dto.OrderListResponseDto;
+import am.foodme.backend.dto.PromoApplyRequestDto;
+import am.foodme.backend.dto.PromoApplyResponseDto;
 import am.foodme.backend.service.CustomerAuthService;
 import am.foodme.backend.service.OrderService;
 import am.foodme.backend.utils.ControllerUtil;
@@ -10,6 +12,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -41,5 +44,10 @@ public class CustomerController {
     @PostMapping("/orders/{number}/cancel")
     public OrderDto cancelOrder(Authentication authentication, @PathVariable String number) {
         return orderService.cancelForCustomer(number, authentication.getName());
+    }
+
+    @PostMapping("/promo/apply")
+    public PromoApplyResponseDto applyPromo(@RequestBody PromoApplyRequestDto request, Authentication authentication) {
+        return orderService.applyPromo(request, authentication.getName());
     }
 }

@@ -45,6 +45,12 @@ public class Order {
     @Column(name = "delivery_price")
     private Double deliveryPrice;
 
+    @Column(name = "promo_code", length = 50)
+    private String promoCode;
+
+    @Column(name = "discount")
+    private Double discount;
+
     @Column(name = "note", length = 2000)
     private String note;
 

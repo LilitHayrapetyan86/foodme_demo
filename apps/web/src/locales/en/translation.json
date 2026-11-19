@@ -7,5 +7,18 @@
     "order_success": "Order confirmed",
     "order_failed": "Order failed",
     "tracking": "Tracking"
+  },
+  "promo": {
+    "label": "Promo code",
+    "placeholder": "Enter code",
+    "apply": "Apply",
+    "checking": "Checking…",
+    "applied": "{{code}} applied: {{percent}}% off",
+    "remove": "Remove promo code",
+    "below_minimum": "Add {{amount}} more to use this code",
+    "expired": "This code has expired",
+    "not_found": "Code not found",
+    "error": "We could not check this code. Please try again.",
+    "discount": "Discount ({{code}})"
   }
 }

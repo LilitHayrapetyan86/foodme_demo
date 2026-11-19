@@ -98,6 +98,25 @@ export interface DeliveryPriceResponse {
   freeDeliveryFrom: number;
 }
 
+export type PromoStatus = "APPLIED" | "BELOW_MINIMUM" | "EXPIRED" | "NOT_FOUND";
+
+export interface PromoApplyRequest {
+  code: string;
+  chefId: number;
+  subtotal: number;
+  deliveryMethod: DeliveryMethod;
+}
+
+export interface PromoApplyResponse {
+  code: string;
+  status: PromoStatus;
+  percent: number | null;
+  missingAmount: number | null;
+  discount: number;
+  deliveryPrice: number;
+  total: number;
+}
+
 export interface AddressDto {
   city: string;
   street: string;
@@ -122,6 +141,8 @@ export interface OrderDto {
   note: string;
   addressDto: AddressDto | null;
   createOrderDishes: CreateOrderDishDto[];
+  promoCode?: string;
+  discount?: number;
 }
 
 export interface OrderCreateResponseDto {
@@ -184,6 +205,8 @@ export interface FullOrderDto {
   addressDto: AddressDto | null;
   orderDishList: OrderDishDto[];
   totalPrice: number;
+  promoCode: string | null;
+  discount: number | null;
   createdAt: string;
 }
 

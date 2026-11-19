@@ -6,6 +6,7 @@ import { foodmeApi } from "@/api/foodme";
 import { AuthPanel } from "@/components/sections/auth-panel";
 import { CheckoutSummary } from "@/components/sections/checkout-summary";
 import { CheckoutPriceSummary } from "@/components/sections/checkout-price-summary";
+import { PromoCodeField } from "@/components/sections/promo-code-field";
 import { OrderDeliveryForm } from "@/components/sections/order-delivery-form";
 import { Button } from "@/components/ui/button";
 import { useCart, clearCart } from "@/hooks/useCart";
@@ -21,6 +22,7 @@ export default function Checkout() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deliveryMethod, setDeliveryMethod] = useState<"DELIVERY" | "TAKEAWAY">("DELIVERY");
+  const [promoCode, setPromoCode] = useState<string | null>(null);
 
   const chefQuery = useQuery({
     queryKey: ["chef", chefId],
@@ -34,6 +36,16 @@ export default function Checkout() {
       foodmeApi.getDeliveryPrice({ chefId: chefId as number, subtotal, deliveryMethod }),
     enabled: chefId !== undefined && subtotal > 0,
   });
+
+  const promoQuery = useQuery({
+    queryKey: ["promo", promoCode, chefId, subtotal, deliveryMethod],
+    queryFn: () =>
+      foodmeApi.applyPromo({ code: promoCode as string, chefId: chefId as number, subtotal, deliveryMethod }),
+    enabled: promoCode !== null && chefId !== undefined && subtotal > 0,
+    retry: false,
+  });
+  const appliedPromo =
+    promoCode !== null && promoQuery.data?.status === "APPLIED" && !promoQuery.isFetching ? promoQuery.data : undefined;
 
   const deliveryPrice = deliveryPriceQuery.data?.deliveryPrice ?? 0;
   const freeDeliveryFrom = deliveryPriceQuery.data?.freeDeliveryFrom ?? 0;
@@ -71,6 +83,7 @@ export default function Checkout() {
         quantity: item.quantity,
         additions: item.additions?.map((a) => ({ additionId: a.id })),
       })),
+      ...(appliedPromo ? { promoCode: appliedPromo.code, discount: appliedPromo.discount } : {}),
     };
 
     try {
@@ -160,9 +173,18 @@ export default function Checkout() {
           <div className="bezel-outer shadow-diffuse">
             <div className="bezel-inner overflow-hidden">
               <CheckoutSummary items={items} embedded />
+              <PromoCodeField
+                result={promoCode !== null ? promoQuery.data : undefined}
+                isLoading={promoCode !== null && promoQuery.isFetching}
+                isError={promoCode !== null && promoQuery.isError}
+                onApply={(code) => setPromoCode(code.toUpperCase())}
+                onRemove={() => setPromoCode(null)}
+              />
               <CheckoutPriceSummary
                 embedded
                 subtotal={subtotal}
+                discount={appliedPromo?.discount ?? 0}
+                promoCode={appliedPromo?.code}
                 deliveryPrice={deliveryMethod === "TAKEAWAY" ? 0 : deliveryPrice}
                 freeDeliveryFrom={freeDeliveryFrom}
                 isLoading={deliveryMethod === "DELIVERY" && deliveryPriceQuery.isLoading}

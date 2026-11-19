@@ -14,6 +14,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -157,5 +158,62 @@ class OrderControllerTest {
         String createdAt = objectMapper.readTree(orderResponse).get("createdAt").asText();
 
         assertTrue(createdAt.startsWith(LocalDate.now().toString()));
+    }
+
+    // Promo codes. Test chef 1: delivery 700 AMD; dish 2 costs 4,200 AMD.
+
+    private String promoOrderPayload(String promoCode, Double discount) throws Exception {
+        Map<String, Object> body = new HashMap<>(Map.of(
+                "chefId", 1,
+                "receiverName", "Ann",
+                "receiverPhoneNumber", "+37491234567",
+                "receiverEmail", "ann@example.com",
+                "paymentType", "CASH",
+                "deliveryMethod", "DELIVERY",
+                "createOrderDishes", List.of(Map.of("dishId", 2, "quantity", 1))
+        ));
+        body.put("promoCode", promoCode);
+        body.put("discount", discount);
+        return objectMapper.writeValueAsString(body);
+    }
+
+    @Test
+    void createOrder_withPromo_savesCodeAndDiscountedTotal() throws Exception {
+        // SAVE10 takes 10% of the 4,200 subtotal = 420; total = 4,200 - 420 + 700 delivery = 4,480
+        String response = mockMvc.perform(post("/api/order")
+                        .header("Authorization", "Bearer " + customerToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(promoOrderPayload("SAVE10", 420.0)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalPrice").value(4480.0))
+                .andReturn().getResponse().getContentAsString();
+        String number = objectMapper.readTree(response).get("number").asText();
+
+        mockMvc.perform(get("/api/order/number/" + number))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.promoCode").value("SAVE10"))
+                .andExpect(jsonPath("$.discount").value(420.0))
+                .andExpect(jsonPath("$.deliveryPrice").value(700.0))
+                .andExpect(jsonPath("$.totalPrice").value(4480.0));
+    }
+
+    @Test
+    void createOrder_withoutPromo_keepsFullTotal() throws Exception {
+        mockMvc.perform(post("/api/order")
+                        .header("Authorization", "Bearer " + customerToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(promoOrderPayload(null, null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalPrice").value(4900.0));
+    }
+
+    @Test
+    void createOrder_expiredPromo_rejectedWithBadRequest() throws Exception {
+        mockMvc.perform(post("/api/order")
+                        .header("Authorization", "Bearer " + customerToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(promoOrderPayload("OLD15", 0.0)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Promo code OLD15 cannot be applied"));
     }
 }
