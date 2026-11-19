@@ -12,5 +12,9 @@
       "mcp__claude_ai_Atlassian_MCP__getAccessibleAtlassianResources"
     ],
     "deny": []
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/workflows/statusline.sh\""
   }
 }
