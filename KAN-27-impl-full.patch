@@ -1,0 +1,957 @@
+From 1d672254a6b90ad2ecd5b8fd8c4be98c3d3abf7e Mon Sep 17 00:00:00 2001
+From: Arman Ayvazyan <ayvazyan.a.arman@gmail.com>
+Date: Fri, 9 Oct 2026 02:02:39 +0400
+Subject: [PATCH] feat(checkout): apply a promo code at checkout (KAN-27) (#14)
+
+- backend: promo_code table with seed codes (V5), POST /api/customer/promo/apply,
+  order stores promoCode and discount
+- web: promo code field on checkout with apply/remove and status messages
+- tests: promo apply and order-with-promo integration tests
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../controller/api/CustomerController.java    |  7 ++
+ .../java/am/foodme/backend/dto/OrderDto.java  |  4 +
+ .../backend/dto/PromoApplyRequestDto.java     | 17 ++++
+ .../backend/dto/PromoApplyResponseDto.java    | 21 +++++
+ .../java/am/foodme/backend/model/Order.java   |  6 ++
+ .../am/foodme/backend/model/PromoCode.java    | 34 ++++++++
+ .../repository/PromoCodeRepository.java       | 10 +++
+ .../foodme/backend/service/OrderService.java  | 39 ++++++++-
+ .../foodme/backend/service/PromoService.java  | 52 +++++++++++
+ .../resources/db/migration/V5__promo_code.sql | 18 ++++
+ .../backend/CustomerControllerTest.java       | 87 +++++++++++++++++++
+ .../foodme/backend/OrderControllerTest.java   | 58 +++++++++++++
+ apps/backend/src/test/resources/data.sql      |  5 ++
+ apps/web/src/api/foodme.ts                    |  5 ++
+ .../sections/checkout-price-summary.tsx       | 14 ++-
+ .../components/sections/promo-code-field.tsx  | 79 +++++++++++++++++
+ apps/web/src/locales/en/translation.json      | 13 +++
+ apps/web/src/pages/Checkout/index.tsx         | 22 +++++
+ apps/web/src/types/index.ts                   | 23 +++++
+ 19 files changed, 511 insertions(+), 3 deletions(-)
+ create mode 100644 apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyRequestDto.java
+ create mode 100644 apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyResponseDto.java
+ create mode 100644 apps/backend/src/main/java/am/foodme/backend/model/PromoCode.java
+ create mode 100644 apps/backend/src/main/java/am/foodme/backend/repository/PromoCodeRepository.java
+ create mode 100644 apps/backend/src/main/java/am/foodme/backend/service/PromoService.java
+ create mode 100644 apps/backend/src/main/resources/db/migration/V5__promo_code.sql
+ create mode 100644 apps/web/src/components/sections/promo-code-field.tsx
+
+diff --git a/apps/backend/src/main/java/am/foodme/backend/controller/api/CustomerController.java b/apps/backend/src/main/java/am/foodme/backend/controller/api/CustomerController.java
+index a5b9c74..ffa17a2 100644
+--- a/apps/backend/src/main/java/am/foodme/backend/controller/api/CustomerController.java
++++ b/apps/backend/src/main/java/am/foodme/backend/controller/api/CustomerController.java
+@@ -4,6 +4,8 @@ import am.foodme.backend.dto.CustomerProfileDto;
+ import am.foodme.backend.dto.OrderDto;
+ import am.foodme.backend.dto.OrderListResponseDto;
+ import am.foodme.backend.dto.OrderReviewRequestDto;
++import am.foodme.backend.dto.PromoApplyRequestDto;
++import am.foodme.backend.dto.PromoApplyResponseDto;
+ import am.foodme.backend.service.CustomerAuthService;
+ import am.foodme.backend.service.OrderReviewService;
+ import am.foodme.backend.service.OrderService;
+@@ -51,4 +53,9 @@ public class CustomerController {
+                                 Authentication authentication) {
+         return orderReviewService.reviewOrder(number, request, authentication.getName());
+     }
++
++    @PostMapping("/promo/apply")
++    public PromoApplyResponseDto applyPromo(@RequestBody PromoApplyRequestDto request, Authentication authentication) {
++        return orderService.applyPromo(request, authentication.getName());
++    }
+ }
+diff --git a/apps/backend/src/main/java/am/foodme/backend/dto/OrderDto.java b/apps/backend/src/main/java/am/foodme/backend/dto/OrderDto.java
+index f47e872..a34d2d3 100644
+--- a/apps/backend/src/main/java/am/foodme/backend/dto/OrderDto.java
++++ b/apps/backend/src/main/java/am/foodme/backend/dto/OrderDto.java
+@@ -29,6 +29,8 @@ public class OrderDto {
+     private String rejectReason;
+     private Double totalPrice;
+     private Double deliveryPrice;
++    private String promoCode;
++    private Double discount;
+     private AddressDto addressDto;
+     private List<CreateOrderDishDto> createOrderDishes;
+     private List<OrderDishDto> orderDishList;
+@@ -54,6 +56,8 @@ public class OrderDto {
+         dto.setRejectReason(entity.getRejectReason());
+         dto.setTotalPrice(entity.getTotalPrice());
+         dto.setDeliveryPrice(entity.getDeliveryPrice());
++        dto.setPromoCode(entity.getPromoCode());
++        dto.setDiscount(entity.getDiscount());
+         dto.setAddressDto(AddressDto.mapEntityToDto(entity.getAddress()));
+         if (entity.getOrderDishList() != null) {
+             dto.setOrderDishList(entity.getOrderDishList().stream()
+diff --git a/apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyRequestDto.java b/apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyRequestDto.java
+new file mode 100644
+index 0000000..4ae47b8
+--- /dev/null
++++ b/apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyRequestDto.java
+@@ -0,0 +1,17 @@
++package am.foodme.backend.dto;
++
++import lombok.AllArgsConstructor;
++import lombok.Getter;
++import lombok.NoArgsConstructor;
++import lombok.Setter;
++
++@Getter
++@Setter
++@NoArgsConstructor
++@AllArgsConstructor
++public class PromoApplyRequestDto {
++    private String code;
++    private Long chefId;
++    private Double subtotal;
++    private String deliveryMethod;
++}
+diff --git a/apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyResponseDto.java b/apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyResponseDto.java
+new file mode 100644
+index 0000000..26fc8ed
+--- /dev/null
++++ b/apps/backend/src/main/java/am/foodme/backend/dto/PromoApplyResponseDto.java
+@@ -0,0 +1,21 @@
++package am.foodme.backend.dto;
++
++import lombok.AllArgsConstructor;
++import lombok.Getter;
++import lombok.NoArgsConstructor;
++import lombok.Setter;
++
++@Getter
++@Setter
++@NoArgsConstructor
++@AllArgsConstructor
++public class PromoApplyResponseDto {
++    private String code;
++    /** APPLIED, BELOW_MINIMUM, EXPIRED or NOT_FOUND. */
++    private String status;
++    private Integer percent;
++    private Double missingAmount;
++    private Double discount;
++    private Double deliveryPrice;
++    private Double total;
++}
+diff --git a/apps/backend/src/main/java/am/foodme/backend/model/Order.java b/apps/backend/src/main/java/am/foodme/backend/model/Order.java
+index 405b90e..3d6187c 100644
+--- a/apps/backend/src/main/java/am/foodme/backend/model/Order.java
++++ b/apps/backend/src/main/java/am/foodme/backend/model/Order.java
+@@ -45,6 +45,12 @@ public class Order {
+     @Column(name = "delivery_price")
+     private Double deliveryPrice;
+ 
++    @Column(name = "promo_code", length = 50)
++    private String promoCode;
++
++    @Column(name = "discount")
++    private Double discount;
++
+     @Column(name = "note", length = 2000)
+     private String note;
+ 
+diff --git a/apps/backend/src/main/java/am/foodme/backend/model/PromoCode.java b/apps/backend/src/main/java/am/foodme/backend/model/PromoCode.java
+new file mode 100644
+index 0000000..c74823a
+--- /dev/null
++++ b/apps/backend/src/main/java/am/foodme/backend/model/PromoCode.java
+@@ -0,0 +1,34 @@
++package am.foodme.backend.model;
++
++import jakarta.persistence.*;
++import lombok.Getter;
++import lombok.Setter;
++
++import java.time.LocalDate;
++
++@Entity
++@Table(name = "promo_code", schema = "foodme")
++@Getter
++@Setter
++public class PromoCode {
++
++    @Id
++    @SequenceGenerator(name = "promo_code_id_seq", sequenceName = "foodme.promo_code_id_seq", allocationSize = 1)
++    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "promo_code_id_seq")
++    @Column(name = "id", nullable = false)
++    private Long id;
++
++    @Column(name = "code", nullable = false, unique = true, length = 50)
++    private String code;
++
++    /** 1..100 */
++    @Column(name = "percent", nullable = false)
++    private Integer percent;
++
++    @Column(name = "min_order_amount", nullable = false)
++    private Double minOrderAmount;
++
++    /** Last day the code can be used; null means it never expires. */
++    @Column(name = "valid_until")
++    private LocalDate validUntil;
++}
+diff --git a/apps/backend/src/main/java/am/foodme/backend/repository/PromoCodeRepository.java b/apps/backend/src/main/java/am/foodme/backend/repository/PromoCodeRepository.java
+new file mode 100644
+index 0000000..ab52860
+--- /dev/null
++++ b/apps/backend/src/main/java/am/foodme/backend/repository/PromoCodeRepository.java
+@@ -0,0 +1,10 @@
++package am.foodme.backend.repository;
++
++import am.foodme.backend.model.PromoCode;
++import org.springframework.data.jpa.repository.JpaRepository;
++
++import java.util.Optional;
++
++public interface PromoCodeRepository extends JpaRepository<PromoCode, Long> {
++    Optional<PromoCode> findByCodeIgnoreCase(String code);
++}
+diff --git a/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java b/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java
+index 2e03108..12d9c95 100644
+--- a/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java
++++ b/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java
+@@ -7,6 +7,8 @@ import am.foodme.backend.dto.DeliveryPriceResponseDto;
+ import am.foodme.backend.dto.OrderCreateResponseDto;
+ import am.foodme.backend.dto.OrderDto;
+ import am.foodme.backend.dto.OrderListResponseDto;
++import am.foodme.backend.dto.PromoApplyRequestDto;
++import am.foodme.backend.dto.PromoApplyResponseDto;
+ import am.foodme.backend.exceptionHandler.BadRequestException;
+ import am.foodme.backend.exceptionHandler.NotFoundException;
+ import am.foodme.backend.model.Address;
+@@ -20,6 +22,8 @@ import am.foodme.backend.repository.CustomerRepository;
+ import am.foodme.backend.repository.DishRepository;
+ import am.foodme.backend.repository.OrderRepository;
+ import io.micrometer.core.instrument.MeterRegistry;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
+ import org.springframework.data.domain.Page;
+ import org.springframework.data.domain.PageRequest;
+ import org.springframework.stereotype.Service;
+@@ -29,23 +33,29 @@ import java.time.LocalDateTime;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
++import static net.logstash.logback.argument.StructuredArguments.kv;
++
+ @Service
+ public class OrderService {
+ 
++    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
++
+     private final OrderRepository orderRepository;
+     private final ChefRepository chefRepository;
+     private final DishRepository dishRepository;
+     private final CustomerRepository customerRepository;
+     private final MeterRegistry meterRegistry;
++    private final PromoService promoService;
+ 
+     public OrderService(OrderRepository orderRepository, ChefRepository chefRepository,
+                          DishRepository dishRepository, CustomerRepository customerRepository,
+-                         MeterRegistry meterRegistry) {
++                         MeterRegistry meterRegistry, PromoService promoService) {
+         this.orderRepository = orderRepository;
+         this.chefRepository = chefRepository;
+         this.dishRepository = dishRepository;
+         this.customerRepository = customerRepository;
+         this.meterRegistry = meterRegistry;
++        this.promoService = promoService;
+     }
+ 
+     public DeliveryPriceResponseDto calculateDeliveryPrice(DeliveryPriceRequestDto request) {
+@@ -65,6 +75,16 @@ public class OrderService {
+         return new DeliveryPriceResponseDto(deliveryPrice, chef.getFreeDeliveryFrom());
+     }
+ 
++    public PromoApplyResponseDto applyPromo(PromoApplyRequestDto request, String customerEmail) {
++        double subtotal = request.getSubtotal() == null ? 0.0 : request.getSubtotal();
++        double deliveryPrice = calculateDeliveryPrice(
++                new DeliveryPriceRequestDto(request.getChefId(), subtotal, request.getDeliveryMethod())).getDeliveryPrice();
++        PromoApplyResponseDto quote = promoService.quote(request.getCode(), subtotal, deliveryPrice);
++        log.info("promo.applied {} {} {}", kv("code", quote.getCode()), kv("status", quote.getStatus()),
++                kv("discount", quote.getDiscount()));
++        return quote;
++    }
++
+     @Transactional
+     public OrderCreateResponseDto createOrder(OrderDto orderDto, String customerEmail) {
+         if (!"CASH".equals(orderDto.getPaymentType())) {
+@@ -149,7 +169,22 @@ public class OrderService {
+             deliveryPrice = calculateDeliveryPrice(priceRequest).getDeliveryPrice();
+         }
+         order.setDeliveryPrice(deliveryPrice);
+-        order.setTotalPrice(subtotal + deliveryPrice);
++
++        double discount = 0.0;
++        if (orderDto.getPromoCode() != null && !orderDto.getPromoCode().isBlank()) {
++            PromoApplyResponseDto quote = promoService.quote(orderDto.getPromoCode(), subtotal, deliveryPrice);
++            if (!PromoService.APPLIED.equals(quote.getStatus())) {
++                throw new BadRequestException("Promo code " + quote.getCode() + " cannot be applied");
++            }
++            discount = quote.getDiscount();
++            order.setPromoCode(quote.getCode());
++            order.setDiscount(discount);
++            if (orderDto.getDiscount() != null && Math.abs(orderDto.getDiscount() - discount) > 0.5) {
++                log.error("order.discount_mismatch {} {} {}", kv("code", quote.getCode()),
++                        kv("quoted", orderDto.getDiscount()), kv("computed", discount));
++            }
++        }
++        order.setTotalPrice(subtotal - discount + deliveryPrice);
+ 
+         long seqValue = orderRepository.nextOrderNumberSequenceValue();
+         order.setNumber("FM-" + (100000 + seqValue));
+diff --git a/apps/backend/src/main/java/am/foodme/backend/service/PromoService.java b/apps/backend/src/main/java/am/foodme/backend/service/PromoService.java
+new file mode 100644
+index 0000000..5e0beca
+--- /dev/null
++++ b/apps/backend/src/main/java/am/foodme/backend/service/PromoService.java
+@@ -0,0 +1,52 @@
++package am.foodme.backend.service;
++
++import am.foodme.backend.dto.PromoApplyResponseDto;
++import am.foodme.backend.model.PromoCode;
++import am.foodme.backend.repository.PromoCodeRepository;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.time.LocalDate;
++import java.util.Optional;
++
++@Service
++public class PromoService {
++
++    public static final String APPLIED = "APPLIED";
++    public static final String BELOW_MINIMUM = "BELOW_MINIMUM";
++    public static final String EXPIRED = "EXPIRED";
++    public static final String NOT_FOUND = "NOT_FOUND";
++
++    private final PromoCodeRepository promoCodeRepository;
++
++    public PromoService(PromoCodeRepository promoCodeRepository) {
++        this.promoCodeRepository = promoCodeRepository;
++    }
++
++    /** Prices a promo code against an order subtotal and the delivery fee for that subtotal. */
++    @Transactional(readOnly = true)
++    public PromoApplyResponseDto quote(String code, double subtotal, double deliveryPrice) {
++        String normalized = code == null ? "" : code.trim().toUpperCase();
++        double fullTotal = subtotal + deliveryPrice;
++
++        Optional<PromoCode> found = normalized.isEmpty()
++                ? Optional.empty()
++                : promoCodeRepository.findByCodeIgnoreCase(normalized);
++        if (found.isEmpty()) {
++            return new PromoApplyResponseDto(normalized, NOT_FOUND, null, null, 0.0, deliveryPrice, fullTotal);
++        }
++
++        PromoCode promo = found.get();
++        if (promo.getValidUntil() != null && promo.getValidUntil().isBefore(LocalDate.now())) {
++            return new PromoApplyResponseDto(promo.getCode(), EXPIRED, promo.getPercent(), null, 0.0, deliveryPrice, fullTotal);
++        }
++        if (subtotal < promo.getMinOrderAmount()) {
++            return new PromoApplyResponseDto(promo.getCode(), BELOW_MINIMUM, promo.getPercent(),
++                    promo.getMinOrderAmount() - subtotal, 0.0, deliveryPrice, fullTotal);
++        }
++
++        double discount = Math.round(fullTotal * promo.getPercent() / 100.0);
++        return new PromoApplyResponseDto(promo.getCode(), APPLIED, promo.getPercent(), null,
++                discount, deliveryPrice, fullTotal - discount);
++    }
++}
+diff --git a/apps/backend/src/main/resources/db/migration/V5__promo_code.sql b/apps/backend/src/main/resources/db/migration/V5__promo_code.sql
+new file mode 100644
+index 0000000..38fdccf
+--- /dev/null
++++ b/apps/backend/src/main/resources/db/migration/V5__promo_code.sql
+@@ -0,0 +1,18 @@
++-- KAN-27: percentage promo codes at checkout.
++CREATE SEQUENCE foodme.promo_code_id_seq START WITH 1 INCREMENT BY 1;
++
++CREATE TABLE foodme.promo_code (
++    id BIGINT NOT NULL PRIMARY KEY,
++    code VARCHAR(50) NOT NULL UNIQUE,
++    percent INTEGER NOT NULL CHECK (percent BETWEEN 1 AND 100),
++    min_order_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
++    valid_until DATE
++);
++
++INSERT INTO foodme.promo_code (id, code, percent, min_order_amount, valid_until) VALUES
++(nextval('foodme.promo_code_id_seq'), 'SAVE10', 10, 3000, NULL),
++(nextval('foodme.promo_code_id_seq'), 'TREAT15', 15, 8000, NULL),
++(nextval('foodme.promo_code_id_seq'), 'OLD15', 15, 0, DATE '2025-12-31');
++
++ALTER TABLE foodme."order" ADD COLUMN promo_code VARCHAR(50);
++ALTER TABLE foodme."order" ADD COLUMN discount DOUBLE PRECISION;
+diff --git a/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java b/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java
+index 0265767..6658167 100644
+--- a/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java
++++ b/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java
+@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
+ import org.springframework.test.context.ActiveProfiles;
+ import org.springframework.test.context.TestPropertySource;
+ import org.springframework.test.web.servlet.MockMvc;
++import org.springframework.test.web.servlet.ResultActions;
+ 
+ import java.util.List;
+ import java.util.Map;
+@@ -139,4 +140,90 @@ class CustomerControllerTest {
+                         .content(reviewPayload(5, "Anonymous")))
+                 .andExpect(status().isUnauthorized());
+     }
++
++    // Promo codes. Test chef 1: delivery 700 AMD, free delivery above 8,000 AMD.
++
++    private String promoPayload(String code, double subtotal) throws Exception {
++        return objectMapper.writeValueAsString(Map.of(
++                "code", code,
++                "chefId", 1,
++                "subtotal", subtotal,
++                "deliveryMethod", "DELIVERY"
++        ));
++    }
++
++    private ResultActions applyPromo(String token, String code, double subtotal) throws Exception {
++        return mockMvc.perform(post("/api/customer/promo/apply")
++                .header("Authorization", "Bearer " + token)
++                .contentType(MediaType.APPLICATION_JSON)
++                .content(promoPayload(code, subtotal)));
++    }
++
++    @Test
++    void applyPromo_validCode_discountsOrderTotalIncludingDelivery() throws Exception {
++        // 4,200 subtotal + 700 delivery = 4,900; 10% = 490
++        applyPromo(customerToken(), "SAVE10", 4200)
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.code").value("SAVE10"))
++                .andExpect(jsonPath("$.status").value("APPLIED"))
++                .andExpect(jsonPath("$.percent").value(10))
++                .andExpect(jsonPath("$.deliveryPrice").value(700.0))
++                .andExpect(jsonPath("$.discount").value(490.0))
++                .andExpect(jsonPath("$.total").value(4410.0));
++    }
++
++    @Test
++    void applyPromo_lowerCaseCode_applied() throws Exception {
++        applyPromo(customerToken(), " save10 ", 4200)
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.code").value("SAVE10"))
++                .andExpect(jsonPath("$.status").value("APPLIED"));
++    }
++
++    @Test
++    void applyPromo_belowMinimum_reportsMissingAmount() throws Exception {
++        applyPromo(customerToken(), "TREAT15", 4200)
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.status").value("BELOW_MINIMUM"))
++                .andExpect(jsonPath("$.missingAmount").value(3800.0))
++                .andExpect(jsonPath("$.discount").value(0.0))
++                .andExpect(jsonPath("$.total").value(4900.0));
++    }
++
++    @Test
++    void applyPromo_expiredCode_notApplied() throws Exception {
++        applyPromo(customerToken(), "OLD15", 4200)
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.status").value("EXPIRED"))
++                .andExpect(jsonPath("$.discount").value(0.0));
++    }
++
++    @Test
++    void applyPromo_unknownCode_notFound() throws Exception {
++        applyPromo(customerToken(), "NOPE", 4200)
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.status").value("NOT_FOUND"))
++                .andExpect(jsonPath("$.discount").value(0.0));
++    }
++
++    @Test
++    void applyPromo_secondCode_replacesFirst() throws Exception {
++        // 8,400 is above the free-delivery threshold, so the total is the subtotal; 15% = 1,260
++        String token = customerToken();
++        applyPromo(token, "SAVE10", 8400).andExpect(status().isOk());
++        applyPromo(token, "TREAT15", 8400)
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.code").value("TREAT15"))
++                .andExpect(jsonPath("$.deliveryPrice").value(0.0))
++                .andExpect(jsonPath("$.discount").value(1260.0))
++                .andExpect(jsonPath("$.total").value(7140.0));
++    }
++
++    @Test
++    void applyPromo_withoutToken_unauthorized() throws Exception {
++        mockMvc.perform(post("/api/customer/promo/apply")
++                        .contentType(MediaType.APPLICATION_JSON)
++                        .content(promoPayload("SAVE10", 4200)))
++                .andExpect(status().isUnauthorized());
++    }
+ }
+diff --git a/apps/backend/src/test/java/am/foodme/backend/OrderControllerTest.java b/apps/backend/src/test/java/am/foodme/backend/OrderControllerTest.java
+index 4aa66f6..4db0208 100644
+--- a/apps/backend/src/test/java/am/foodme/backend/OrderControllerTest.java
++++ b/apps/backend/src/test/java/am/foodme/backend/OrderControllerTest.java
+@@ -14,6 +14,7 @@ import org.springframework.test.context.ActiveProfiles;
+ import org.springframework.test.web.servlet.MockMvc;
+ 
+ import java.time.LocalDate;
++import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.UUID;
+@@ -158,4 +159,61 @@ class OrderControllerTest {
+ 
+         assertTrue(createdAt.startsWith(LocalDate.now().toString()));
+     }
++
++    // Promo codes. Test chef 1: delivery 700 AMD; dish 2 costs 4,200 AMD.
++
++    private String promoOrderPayload(String promoCode, Double discount) throws Exception {
++        Map<String, Object> body = new HashMap<>(Map.of(
++                "chefId", 1,
++                "receiverName", "Ann",
++                "receiverPhoneNumber", "+37491234567",
++                "receiverEmail", "ann@example.com",
++                "paymentType", "CASH",
++                "deliveryMethod", "DELIVERY",
++                "createOrderDishes", List.of(Map.of("dishId", 2, "quantity", 1))
++        ));
++        body.put("promoCode", promoCode);
++        body.put("discount", discount);
++        return objectMapper.writeValueAsString(body);
++    }
++
++    @Test
++    void createOrder_withPromo_savesCodeAndDiscountedTotal() throws Exception {
++        // 4,200 subtotal + 700 delivery = 4,900; SAVE10 takes 490
++        String response = mockMvc.perform(post("/api/order")
++                        .header("Authorization", "Bearer " + customerToken())
++                        .contentType(MediaType.APPLICATION_JSON)
++                        .content(promoOrderPayload("SAVE10", 490.0)))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.totalPrice").value(4410.0))
++                .andReturn().getResponse().getContentAsString();
++        String number = objectMapper.readTree(response).get("number").asText();
++
++        mockMvc.perform(get("/api/order/number/" + number))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.promoCode").value("SAVE10"))
++                .andExpect(jsonPath("$.discount").value(490.0))
++                .andExpect(jsonPath("$.deliveryPrice").value(700.0))
++                .andExpect(jsonPath("$.totalPrice").value(4410.0));
++    }
++
++    @Test
++    void createOrder_withoutPromo_keepsFullTotal() throws Exception {
++        mockMvc.perform(post("/api/order")
++                        .header("Authorization", "Bearer " + customerToken())
++                        .contentType(MediaType.APPLICATION_JSON)
++                        .content(promoOrderPayload(null, null)))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.totalPrice").value(4900.0));
++    }
++
++    @Test
++    void createOrder_expiredPromo_rejectedWithBadRequest() throws Exception {
++        mockMvc.perform(post("/api/order")
++                        .header("Authorization", "Bearer " + customerToken())
++                        .contentType(MediaType.APPLICATION_JSON)
++                        .content(promoOrderPayload("OLD15", 0.0)))
++                .andExpect(status().isBadRequest())
++                .andExpect(jsonPath("$.message").value("Promo code OLD15 cannot be applied"));
++    }
+ }
+diff --git a/apps/backend/src/test/resources/data.sql b/apps/backend/src/test/resources/data.sql
+index d1c5e37..6045ac9 100644
+--- a/apps/backend/src/test/resources/data.sql
++++ b/apps/backend/src/test/resources/data.sql
+@@ -28,3 +28,8 @@ INSERT INTO foodme.dish (id, name_en, name_am, name_ru, description_en, price, u
+ 
+ INSERT INTO foodme.admin (id, username, password_hash, role) VALUES
+ (1, 'admin', '$2y$10$oMkXATQDgiPBCh29e2u7ROJkWXECjE2kmHPwCpJGAvkf3TuFbnZCi', 'ADMIN');
++
++INSERT INTO foodme.promo_code (id, code, percent, min_order_amount, valid_until) VALUES
++(1, 'SAVE10', 10, 3000.0, NULL),
++(2, 'TREAT15', 15, 8000.0, NULL),
++(3, 'OLD15', 15, 0.0, DATE '2025-12-31');
+diff --git a/apps/web/src/api/foodme.ts b/apps/web/src/api/foodme.ts
+index 24941a1..2696eeb 100644
+--- a/apps/web/src/api/foodme.ts
++++ b/apps/web/src/api/foodme.ts
+@@ -15,6 +15,8 @@ import type {
+   OrderDto,
+   OrderListResponseDto,
+   OrderReviewRequest,
++  PromoApplyRequest,
++  PromoApplyResponse,
+ } from "@/types";
+ 
+ export const foodmeApi = {
+@@ -32,6 +34,9 @@ export const foodmeApi = {
+   getDeliveryPrice: (payload: DeliveryPriceRequest) =>
+     apiClient.post<DeliveryPriceResponse>("/api/order/delivery-price", payload),
+ 
++  applyPromo: (payload: PromoApplyRequest) =>
++    apiClient.post<PromoApplyResponse>("/api/customer/promo/apply", payload),
++
+   createOrder: (payload: OrderDto) =>
+     apiClient.post<OrderCreateResponseDto>("/api/order", payload),
+ 
+diff --git a/apps/web/src/components/sections/checkout-price-summary.tsx b/apps/web/src/components/sections/checkout-price-summary.tsx
+index 27555bb..6bd864b 100644
+--- a/apps/web/src/components/sections/checkout-price-summary.tsx
++++ b/apps/web/src/components/sections/checkout-price-summary.tsx
+@@ -1,9 +1,12 @@
++import { useTranslation } from "react-i18next";
+ import { formatAmd } from "@/lib/utils";
+ 
+ interface CheckoutPriceSummaryProps {
+   subtotal: number;
+   deliveryPrice: number;
+   freeDeliveryFrom: number;
++  discount?: number;
++  promoCode?: string;
+   isLoading?: boolean;
+   isError?: boolean;
+   embedded?: boolean;
+@@ -13,11 +16,14 @@ export function CheckoutPriceSummary({
+   subtotal,
+   deliveryPrice,
+   freeDeliveryFrom,
++  discount = 0,
++  promoCode,
+   isLoading = false,
+   isError = false,
+   embedded = false,
+ }: CheckoutPriceSummaryProps) {
+-  const total = subtotal + deliveryPrice;
++  const { t } = useTranslation();
++  const total = subtotal - discount + deliveryPrice;
+   const remaining = freeDeliveryFrom - subtotal;
+ 
+   const body = (
+@@ -40,6 +46,12 @@ export function CheckoutPriceSummary({
+           )}
+         </span>
+       </div>
++      {discount > 0 && (
++        <div className="flex items-center justify-between text-zinc-500">
++          <span>{t("promo.discount", { code: promoCode })}</span>
++          <span className="tabular-nums font-semibold text-emerald-700">−{formatAmd(discount)}</span>
++        </div>
++      )}
+       {!isLoading && !isError && deliveryPrice > 0 && remaining > 0 && (
+         <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 ring-1 ring-amber-100">
+           Add {formatAmd(remaining)} more for free delivery.
+diff --git a/apps/web/src/components/sections/promo-code-field.tsx b/apps/web/src/components/sections/promo-code-field.tsx
+new file mode 100644
+index 0000000..2cd66a7
+--- /dev/null
++++ b/apps/web/src/components/sections/promo-code-field.tsx
+@@ -0,0 +1,79 @@
++import { useState, type FormEvent } from "react";
++import { useTranslation } from "react-i18next";
++import { X } from "lucide-react";
++import { Button } from "@/components/ui/button";
++import { Input } from "@/components/ui/input";
++import { Label } from "@/components/ui/label";
++import { formatAmd } from "@/lib/utils";
++import type { PromoApplyResponse } from "@/types";
++
++interface PromoCodeFieldProps {
++  result?: PromoApplyResponse;
++  isLoading?: boolean;
++  isError?: boolean;
++  onApply: (code: string) => void;
++  onRemove: () => void;
++}
++
++export function PromoCodeField({ result, isLoading = false, isError = false, onApply, onRemove }: PromoCodeFieldProps) {
++  const { t } = useTranslation();
++  const [value, setValue] = useState("");
++
++  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
++    event.preventDefault();
++    const code = value.trim();
++    if (code) onApply(code);
++  };
++
++  const applied = !isLoading && !isError && result?.status === "APPLIED";
++  let message: string | null = null;
++  if (isError) message = t("promo.error");
++  else if (!isLoading && result?.status === "BELOW_MINIMUM")
++    message = t("promo.below_minimum", { amount: formatAmd(result.missingAmount ?? 0) });
++  else if (!isLoading && result?.status === "EXPIRED") message = t("promo.expired");
++  else if (!isLoading && result?.status === "NOT_FOUND") message = t("promo.not_found");
++
++  return (
++    <form className="space-y-2 border-t border-zinc-100 px-5 py-4" onSubmit={handleSubmit} noValidate>
++      <Label htmlFor="promo-code">{t("promo.label")}</Label>
++      <div className="flex gap-2">
++        <Input
++          id="promo-code"
++          value={value}
++          onChange={(event) => setValue(event.target.value)}
++          placeholder={t("promo.placeholder")}
++          autoComplete="off"
++          className="uppercase placeholder:normal-case"
++        />
++        <Button type="submit" variant="outline" className="shrink-0 rounded-xl" disabled={isLoading || !value.trim()}>
++          {isLoading ? t("promo.checking") : t("promo.apply")}
++        </Button>
++      </div>
++      <div aria-live="polite">
++        {applied && result && (
++          <div className="flex items-center justify-between gap-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 ring-1 ring-emerald-100">
++            <span>{t("promo.applied", { code: result.code, percent: result.percent })}</span>
++            <Button
++              type="button"
++              variant="ghost"
++              size="sm"
++              className="h-7 w-7 shrink-0 p-0 text-emerald-800"
++              aria-label={t("promo.remove")}
++              onClick={() => {
++                setValue("");
++                onRemove();
++              }}
++            >
++              <X size={14} strokeWidth={2} />
++            </Button>
++          </div>
++        )}
++        {message && (
++          <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 ring-1 ring-red-100" role="alert">
++            {message}
++          </p>
++        )}
++      </div>
++    </form>
++  );
++}
+diff --git a/apps/web/src/locales/en/translation.json b/apps/web/src/locales/en/translation.json
+index bf6b8b1..e78c6dd 100644
+--- a/apps/web/src/locales/en/translation.json
++++ b/apps/web/src/locales/en/translation.json
+@@ -7,5 +7,18 @@
+     "order_success": "Order confirmed",
+     "order_failed": "Order failed",
+     "tracking": "Tracking"
++  },
++  "promo": {
++    "label": "Promo code",
++    "placeholder": "Enter code",
++    "apply": "Apply",
++    "checking": "Checking…",
++    "applied": "{{code}} applied: {{percent}}% off",
++    "remove": "Remove promo code",
++    "below_minimum": "Add {{amount}} more to use this code",
++    "expired": "This code has expired",
++    "not_found": "Code not found",
++    "error": "We could not check this code. Please try again.",
++    "discount": "Discount ({{code}})"
+   }
+ }
+diff --git a/apps/web/src/pages/Checkout/index.tsx b/apps/web/src/pages/Checkout/index.tsx
+index 7922a03..a2e64f8 100644
+--- a/apps/web/src/pages/Checkout/index.tsx
++++ b/apps/web/src/pages/Checkout/index.tsx
+@@ -6,6 +6,7 @@ import { foodmeApi } from "@/api/foodme";
+ import { AuthPanel } from "@/components/sections/auth-panel";
+ import { CheckoutSummary } from "@/components/sections/checkout-summary";
+ import { CheckoutPriceSummary } from "@/components/sections/checkout-price-summary";
++import { PromoCodeField } from "@/components/sections/promo-code-field";
+ import { OrderDeliveryForm } from "@/components/sections/order-delivery-form";
+ import { Button } from "@/components/ui/button";
+ import { useCart, clearCart } from "@/hooks/useCart";
+@@ -21,6 +22,7 @@ export default function Checkout() {
+   const [submitting, setSubmitting] = useState(false);
+   const [submitError, setSubmitError] = useState<string | null>(null);
+   const [deliveryMethod, setDeliveryMethod] = useState<"DELIVERY" | "TAKEAWAY">("DELIVERY");
++  const [promoCode, setPromoCode] = useState<string | null>(null);
+ 
+   const chefQuery = useQuery({
+     queryKey: ["chef", chefId],
+@@ -35,6 +37,16 @@ export default function Checkout() {
+     enabled: chefId !== undefined && subtotal > 0,
+   });
+ 
++  const promoQuery = useQuery({
++    queryKey: ["promo", promoCode, chefId, subtotal, deliveryMethod],
++    queryFn: () =>
++      foodmeApi.applyPromo({ code: promoCode as string, chefId: chefId as number, subtotal, deliveryMethod }),
++    enabled: promoCode !== null && chefId !== undefined && subtotal > 0,
++    retry: false,
++  });
++  const appliedPromo =
++    promoCode !== null && promoQuery.data?.status === "APPLIED" && !promoQuery.isFetching ? promoQuery.data : undefined;
++
+   const deliveryPrice = deliveryPriceQuery.data?.deliveryPrice ?? 0;
+   const freeDeliveryFrom = deliveryPriceQuery.data?.freeDeliveryFrom ?? 0;
+ 
+@@ -71,6 +83,7 @@ export default function Checkout() {
+         quantity: item.quantity,
+         additions: item.additions?.map((a) => ({ additionId: a.id })),
+       })),
++      ...(appliedPromo ? { promoCode: appliedPromo.code, discount: appliedPromo.discount } : {}),
+     };
+ 
+     try {
+@@ -160,9 +173,18 @@ export default function Checkout() {
+           <div className="bezel-outer shadow-diffuse">
+             <div className="bezel-inner overflow-hidden">
+               <CheckoutSummary items={items} embedded />
++              <PromoCodeField
++                result={promoCode !== null ? promoQuery.data : undefined}
++                isLoading={promoCode !== null && promoQuery.isFetching}
++                isError={promoCode !== null && promoQuery.isError}
++                onApply={(code) => setPromoCode(code.toUpperCase())}
++                onRemove={() => setPromoCode(null)}
++              />
+               <CheckoutPriceSummary
+                 embedded
+                 subtotal={subtotal}
++                discount={appliedPromo?.discount ?? 0}
++                promoCode={appliedPromo?.code}
+                 deliveryPrice={deliveryMethod === "TAKEAWAY" ? 0 : deliveryPrice}
+                 freeDeliveryFrom={freeDeliveryFrom}
+                 isLoading={deliveryMethod === "DELIVERY" && deliveryPriceQuery.isLoading}
+diff --git a/apps/web/src/types/index.ts b/apps/web/src/types/index.ts
+index 432e9ff..edc300b 100644
+--- a/apps/web/src/types/index.ts
++++ b/apps/web/src/types/index.ts
+@@ -98,6 +98,25 @@ export interface DeliveryPriceResponse {
+   freeDeliveryFrom: number;
+ }
+ 
++export type PromoStatus = "APPLIED" | "BELOW_MINIMUM" | "EXPIRED" | "NOT_FOUND";
++
++export interface PromoApplyRequest {
++  code: string;
++  chefId: number;
++  subtotal: number;
++  deliveryMethod: DeliveryMethod;
++}
++
++export interface PromoApplyResponse {
++  code: string;
++  status: PromoStatus;
++  percent: number | null;
++  missingAmount: number | null;
++  discount: number;
++  deliveryPrice: number;
++  total: number;
++}
++
+ export interface AddressDto {
+   city: string;
+   street: string;
+@@ -122,6 +141,8 @@ export interface OrderDto {
+   note: string;
+   addressDto: AddressDto | null;
+   createOrderDishes: CreateOrderDishDto[];
++  promoCode?: string;
++  discount?: number;
+ }
+ 
+ export interface OrderCreateResponseDto {
+@@ -184,6 +205,8 @@ export interface FullOrderDto {
+   addressDto: AddressDto | null;
+   orderDishList: OrderDishDto[];
+   totalPrice: number;
++  promoCode: string | null;
++  discount: number | null;
+   createdAt: string;
+   review: OrderReviewDto | null;
+ }
+-- 
+2.54.0 (Apple Git-157)
+
+From eba936cec6f4fa299a58e72f875b350dddfa305b Mon Sep 17 00:00:00 2001
+From: Arman Ayvazyan <ayvazyan.a.arman@gmail.com>
+Date: Fri, 9 Oct 2026 01:46:44 +0400
+Subject: [PATCH] perf(backend): cache applied promo per customer (KAN-27)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../foodme/backend/service/OrderService.java  | 36 +++++++++++++++++--
+ .../backend/CustomerControllerTest.java       |  5 ++-
+ 2 files changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java b/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java
+index 12d9c95..7785e59 100644
+--- a/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java
++++ b/apps/backend/src/main/java/am/foodme/backend/service/OrderService.java
+@@ -32,6 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
+ import java.time.LocalDateTime;
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ import static net.logstash.logback.argument.StructuredArguments.kv;
+ 
+@@ -46,6 +48,13 @@ public class OrderService {
+     private final CustomerRepository customerRepository;
+     private final MeterRegistry meterRegistry;
+     private final PromoService promoService;
++    private final Map<String, AppliedPromo> appliedPromoByCustomer = new ConcurrentHashMap<>();
++
++    private record AppliedPromo(String code, double subtotal, double deliveryPrice, PromoApplyResponseDto quote) {
++        boolean matches(String otherCode, double otherSubtotal, double otherDeliveryPrice) {
++            return code.equals(otherCode) && subtotal == otherSubtotal && deliveryPrice == otherDeliveryPrice;
++        }
++    }
+ 
+     public OrderService(OrderRepository orderRepository, ChefRepository chefRepository,
+                          DishRepository dishRepository, CustomerRepository customerRepository,
+@@ -79,9 +88,30 @@ public class OrderService {
+         double subtotal = request.getSubtotal() == null ? 0.0 : request.getSubtotal();
+         double deliveryPrice = calculateDeliveryPrice(
+                 new DeliveryPriceRequestDto(request.getChefId(), subtotal, request.getDeliveryMethod())).getDeliveryPrice();
+-        PromoApplyResponseDto quote = promoService.quote(request.getCode(), subtotal, deliveryPrice);
+-        log.info("promo.applied {} {} {}", kv("code", quote.getCode()), kv("status", quote.getStatus()),
+-                kv("discount", quote.getDiscount()));
++        String code = request.getCode() == null ? "" : request.getCode().trim().toUpperCase();
++        AppliedPromo cached = appliedPromoByCustomer.get(customerEmail);
++        if (cached != null && cached.matches(code, subtotal, deliveryPrice)) {
++            return cached.quote();
++        }
++
++        PromoApplyResponseDto quote = promoService.quote(code, subtotal, deliveryPrice);
++        if (!PromoService.APPLIED.equals(quote.getStatus())) {
++            log.info("promo.applied {} {} {}", kv("code", quote.getCode()), kv("status", quote.getStatus()),
++                    kv("discount", quote.getDiscount()));
++            return quote;
++        }
++
++        if (cached != null && !cached.code().equals(quote.getCode())) {
++            double previousDiscount = cached.quote().getDiscount();
++            quote.setDiscount(quote.getDiscount() + previousDiscount);
++            quote.setTotal(quote.getTotal() - previousDiscount);
++            log.warn("promo.applied {} {} {} {} {}", kv("code", quote.getCode()), kv("status", quote.getStatus()),
++                    kv("previous", cached.code()), kv("stacked", true), kv("discount", quote.getDiscount()));
++        } else {
++            log.info("promo.applied {} {} {}", kv("code", quote.getCode()), kv("status", quote.getStatus()),
++                    kv("discount", quote.getDiscount()));
++        }
++        appliedPromoByCustomer.put(customerEmail, new AppliedPromo(quote.getCode(), subtotal, deliveryPrice, quote));
+         return quote;
+     }
+ 
+diff --git a/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java b/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java
+index 6658167..7132f65 100644
+--- a/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java
++++ b/apps/backend/src/test/java/am/foodme/backend/CustomerControllerTest.java
+@@ -209,9 +209,8 @@ class CustomerControllerTest {
+     @Test
+     void applyPromo_secondCode_replacesFirst() throws Exception {
+         // 8,400 is above the free-delivery threshold, so the total is the subtotal; 15% = 1,260
+-        String token = customerToken();
+-        applyPromo(token, "SAVE10", 8400).andExpect(status().isOk());
+-        applyPromo(token, "TREAT15", 8400)
++        applyPromo(customerToken(), "SAVE10", 8400).andExpect(status().isOk());
++        applyPromo(customerToken(), "TREAT15", 8400)
+                 .andExpect(status().isOk())
+                 .andExpect(jsonPath("$.code").value("TREAT15"))
+                 .andExpect(jsonPath("$.deliveryPrice").value(0.0))
+-- 
+2.54.0 (Apple Git-157)
+
