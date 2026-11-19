@@ -4,8 +4,11 @@
   JWT secrets, DSNs, database URLs with credentials.
 - Read configuration from environment variables or Spring properties with env overrides;
   document new variables in `.env.example` with placeholder values only.
-- Never commit `.env` or `.env.*` files (except `.env.example`), `.mcp.json`
+- Never commit `.env` or `.env.*` files (except `.env.example`)
   or `.claude/settings.local.json`. They are gitignored; do not force-add them.
+- `.mcp.json` is committed on purpose: it holds no secrets, because `agentsecrets`
+  injects credentials at runtime. Keep it that way: never add tokens, API keys or
+  passwords to it.
 - Test credentials come only from existing fixtures:
   - backend tests: `apps/backend/src/test/resources/data.sql` and
     `application-test.properties` (test-only values);
