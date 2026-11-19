@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "cmd",
+      "args": ["/c", "agentsecrets", "env", "--", "uvx", "--python", "3.12", "mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://lilithayrapetyan51.atlassian.net",
+        "JIRA_USERNAME": "lilithayrapetyan51@gmail.com"
+      }
+    },
+    "qase": {
+      "command": "cmd",
+      "args": ["/c", "agentsecrets", "env", "--", "npx", "-y", "@qase/mcp-server"]
+    },
+    "playwright": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@playwright/mcp@latest"]
+    }
+  }
+}
